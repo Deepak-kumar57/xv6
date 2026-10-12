@@ -60,6 +60,93 @@ main(int argc, char *argv[])
 void
 memdump(char *fmt, char *data, int len)
 {
-  // Your code here.  `data` holds `len` valid bytes.
+  for(int i=0 ; fmt[i] != '\0' ; i++)
+  {
+    if(fmt[i] == 'i')
+    {
+      if(len < 4)
+      {
+        printf("memdump: not enough data for '%c'\n", fmt[i]);
+        return;
+      }
 
+      printf("%d\n",*(int *)data);
+
+      data = data + 4;
+      len = len - 4;
+    }
+
+    else if(fmt[i] == 'p')
+    {
+      if(len < 8)
+      {
+        printf("memdump: not enough data for '%c'\n", fmt[i]);
+        return;
+      }
+
+      printf("%lx\n",*(uint64 *)data);
+
+      data = data + 8;
+      len = len - 8;
+    }
+
+    else if(fmt[i] == 'h')
+    {
+      if(len < 2)
+      {
+        printf("memdump: not enough data for '%c'\n", fmt[i]);
+        return;
+      }
+
+      printf("%d\n",*(short *)data);
+
+      data = data + 2;
+      len = len - 2;
+    }
+
+    else if(fmt[i] == 'c')
+    {
+      if(len < 1)
+      {
+        printf("memdump: not enough data for '%c'\n", fmt[i]);
+        return;
+      }
+
+      printf("%c\n",*data);
+
+      data = data + 1;
+      len = len - 1;
+    }
+
+    else if(fmt[i] == 's')
+    {
+      if(len < 8)
+      {
+        printf("memdump: not enough data for '%c'\n", fmt[i]);
+        return;
+      }
+
+      printf("%s\n",*(char **)data);
+
+      data = data + 8;
+      len = len - 8;
+    }
+
+    else if(fmt[i] == 'S')
+    {
+        for(int j = 0; j < len && data[j] != '\0'; j++)
+        {
+            printf("%c", data[j]);
+        }
+
+        printf("\n");
+        data = data + len;
+        len = 0;
+    }
+
+    else 
+    {
+      return;
+    }
+  }
 }
