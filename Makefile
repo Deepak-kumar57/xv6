@@ -285,6 +285,7 @@ ifeq ($(LAB),util)
 	UPROGS += $U/_memdump
 endif
 ifeq ($(LAB),syscall)
+	UPROGS += $U/_sandbox $U/_sbtest $U/_secret $U/_attack
 	UEXTRA += user/exec.sh
 endif
 

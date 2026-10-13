@@ -110,3 +110,30 @@ sys_uptime(void)
   release(&tickslock);
   return xticks;
 }
+
+
+// interpose(mask, path): deny every system call whose bit is set in
+// mask, except open/exec on exactly `path` ("-" means no exception).
+uint64
+sys_interpose(void)
+{
+  struct proc *p = myproc();
+  int mask;
+  char path[MAXPATH];
+
+  argint(0, &mask);
+  if (argstr(1, path, MAXPATH) < 0)
+    return -1;
+
+  if (p->syscall_mask != 0) {
+    // Already sandboxed: restrictions can only be added, never removed,
+    // and the allowed path cannot be changed.
+    p->syscall_mask |= (uint)mask;
+    return 0;
+  }
+
+  p->syscall_mask = (uint)mask;
+  safestrcpy(p->allowed_path, path, MAXPATH);
+  printk("interpose pid %d mask %d path '%s'\n", p->pid, p->syscall_mask, p->allowed_path);
+  return 0;
+}
