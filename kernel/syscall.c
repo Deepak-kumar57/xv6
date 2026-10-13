@@ -135,6 +135,28 @@ static uint64 (*syscalls[])(void) = {
   // clang-format on
 };
 
+// Returns 1 if p's sandbox forbids system call num, 0 otherwise.
+static int
+sandbox_denies(struct proc *p, int num)
+{
+  char path[MAXPATH];
+
+  if (num >= 32 || (p->syscall_mask & (1U << num)) == 0)
+    return 0;                    // this call is not masked
+
+  if (num != SYS_open && num != SYS_exec)
+    return 1;                    // masked, and no path exception applies
+
+  if (strncmp(p->allowed_path, "-", MAXPATH) == 0)
+    return 1;                    // "-" means no path is allowed
+
+  // open and exec both take the pathname as argument 0
+  if (argstr(0, path, MAXPATH) < 0)
+    return 1;
+
+  return strncmp(path, p->allowed_path, MAXPATH) != 0;
+}
+
 void
 syscall(void)
 {
@@ -145,6 +167,10 @@ syscall(void)
   if (num > 0 && num < NELEM(syscalls) && syscalls[num]) {
     // Use num to lookup the system call function for num, call it,
     // and store its return value in p->trapframe->a0
+    if (sandbox_denies(p, num)) {
+      p->trapframe->a0 = -1;     // reject: return -1, process keeps running
+      return;
+    }
     p->trapframe->a0 = syscalls[num]();
   } else {
     printk("%d %s: unknown sys call %d\n", p->pid, p->name, num);
