@@ -1,0 +1,34 @@
+GDB observations from QEMU with CPUS=1 and gdb-multiarch.
+
+1. Which function called syscall?
+   usertrap() called syscall(). The backtrace showed:
+   #0 syscall()
+   #1 usertrap() at kernel/trap.c:68
+
+2. What is p->trapframe->a7, and what does it represent?
+   The first user system call had a7 = 0xf (15), which is SYS_open in
+   kernel/syscall.h. user/init.c first opens "console". The user-space
+   open stub loads this syscall number into a7 before executing ecall.
+
+3. What was the previous CPU mode?
+   User mode. GDB printed sstatus = 0x200000022. The SPP bit (bit 8)
+   is zero, indicating that the trap came from user mode.
+
+4. What instruction faults, and which register corresponds to num?
+   With num = *(int *)0 temporarily substituted, the fault was at
+   sepc = 0x80001d92. Disassembly showed:
+       lw a3,0(zero)
+   The instruction attempts a 32-bit load from address zero into a3,
+   the destination register for num in this build. A breakpoint at
+   *0x80001d92 confirmed the same instruction before it executed.
+
+5. Why does the kernel crash?
+   Address zero has no mapping in the kernel page table. Dereferencing
+   it in supervisor mode triggers a load page fault. GDB observed
+   scause = 0xd (13) and stval = 0, identifying the invalid load address.
+   kerneltrap treats this unexpected exception as a kernel panic.
+
+6. Which process was running, and what was its PID?
+   The process name was "init" and its PID was 1.
+
+The deliberate null-pointer change was reverted before final testing.
