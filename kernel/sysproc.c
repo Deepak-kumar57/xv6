@@ -107,10 +107,40 @@ sys_vmprint(void)
 #endif
 
 #ifdef LAB_PGTBL
-int
+#define PGACCESS_MAX 64
+uint64
 sys_pgaccess(void)
 {
-  // lab pgtbl: your code here.
+  uint64 va, maskaddr;
+  int npages;
+  uint64 mask = 0; // kernel temporary buffer
+  struct proc *p = myproc();
+
+  argaddr(0, &va);
+  argint(1, &npages);
+  argaddr(2, &maskaddr);
+
+  if (npages <= 0 || npages > PGACCESS_MAX)
+    return -1;
+
+  va = PGROUNDDOWN(va);
+  for (int i = 0; i < npages; i++) {
+    uint64 a = va + (uint64)i * PGSIZE;
+    if (a >= MAXVA)
+      return -1;
+    pte_t *pte = walk(p->pagetable, a, 0);
+    if (pte == 0 || (*pte & PTE_V) == 0 || (*pte & PTE_U) == 0)
+      return -1; // page not mapped
+    if (*pte & PTE_A) {
+      mask |= (1L << i);
+      *pte &= ~PTE_A; // clear it, or it stays set forever
+    }
+  }
+
+  // copy only as many bytes as needed for npages bits
+  int nbytes = (npages + 7) / 8;
+  if (copyout(p->pagetable, p->sz, maskaddr, (char *)&mask, nbytes) < 0)
+    return -1;
   return 0;
 }
 #endif

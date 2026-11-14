@@ -1,0 +1,128 @@
+Lab: page tables (pgtbl) - Answers
+
+==================================================================
+1. Inspect a user-process page table (print_pgtbl output)
+==================================================================
+
+Each line printed by print_pgtbl() is:  va  pte  pa  perm
+  - va   : the user virtual address of the page
+  - pte  : the raw 64-bit page-table entry for that page
+  - pa   : the physical address the PTE points to (PTE2PA(pte))
+  - perm : the low 10 flag bits of the PTE
+
+Meaning of the permission bits (RISC-V Sv39):
+  0x01 V  valid        - the mapping exists
+  0x02 R  readable
+  0x04 W  writable
+  0x08 X  executable
+  0x10 U  user         - user mode may access the page
+  0x40 A  accessed     - hardware sets it when the page is used
+  0x80 D  dirty        - hardware sets it when the page is written
+
+First 10 pages (low addresses, bottom of the address space):
+  va 0x0     perm 0x5B = V R X U A   -> program TEXT (code). User can
+             read and execute it, cannot write it.
+  va 0x1000  perm 0x5B or 0xD7       -> more text (0x5B), or DATA/BSS
+             (0xD7 = V R W U A D: user read/write, not executable).
+  next page  perm 0x07/0x17 without U -> STACK GUARD page. No U bit, so
+             any user access faults; it catches stack overflow.
+  next page  perm 0xD7 = V R W U A D -> user STACK (read/write, written
+             so D is set).
+  remaining  pte 0x0 perm 0x0        -> not mapped (heap not grown yet,
+             nothing allocated there).
+
+Last 10 pages (top of the address space):
+  most       pte 0x0 perm 0x0        -> unused / unmapped.
+  0x...D000  USYSCALL page. Before part 4 it is 0 (unmapped). After
+             part 4 it is perm 0x13/0x53 = V R U (A): user may only
+             READ it (holds struct usyscall with the pid).
+  0x...E000  perm 0xC7 = V R W A D   -> TRAPFRAME. No U bit: only the
+             kernel/trampoline uses it to save user registers.
+  0x...F000  perm 0x4B = V R X A     -> TRAMPOLINE. No U bit, read +
+             execute, used on every trap into / out of the kernel.
+             Its pa (0x80007000) is inside the kernel image, the same
+             physical page is mapped in every process and the kernel.
+
+Note: the physical addresses are not consecutive (e.g. va 0 ->
+0x87f7e000, va 0x1000 -> 0x87f7b000): kalloc() hands out whatever
+free page is at the head of its free list, so virtual neighbours land
+on unrelated physical pages.
+
+==================================================================
+2. Walk and print a two-level page table (vmprint)
+==================================================================
+
+Example output from my implementation (pgtbltest process):
+
+page table 0x0000000087f81000
+ ..0x0000000000000000: pte 0x0000000021fdf401 pa 0x0000000087f7d000
+ .. ..0x0000000000000000: pte 0x0000000021fdf001 pa 0x0000000087f7c000
+ .. .. ..0x0000000000000000: pte 0x0000000021fdf85b pa 0x0000000087f7e000 RXU
+ .. .. ..0x0000000000001000: pte 0x0000000021fdec17 pa 0x0000000087f7b000 RWU
+ .. .. ..0x0000000000002000: pte 0x0000000021fde807 pa 0x0000000087f7a000 RW
+ .. .. ..0x0000000000003000: pte 0x0000000021fde4d7 pa 0x0000000087f79000 RWU
+ ..0x0000003fc0000000: pte 0x0000000021fe0001 pa 0x0000000087f80000
+ .. ..0x0000003fffe00000: pte 0x0000000021fdfc01 pa 0x0000000087f7f000
+ .. .. ..0x0000003fffffd000: pte 0x0000000021fec413 pa 0x0000000087fb1000 RU
+ .. .. ..0x0000003fffffe000: pte 0x0000000021fe7cc7 pa 0x0000000087f9f000 RW
+ .. .. ..0x0000003ffffff000: pte 0x0000000020001c4b pa 0x0000000080007000 RX
+
+Lines with one or two " .." are page-table pages (only V set, no
+R/W/X): they just point to the next level. Lines with three " .." are
+leaf pages (the real memory):
+
+  0x0000  RXU : program text. User may read/execute, NOT write.
+  0x1000  RWU : program data/bss. User may read/write, NOT execute.
+  0x2000  RW  : stack guard page. No U -> user can't touch it at all,
+                so a stack overflow causes a page fault instead of
+                silently corrupting data.
+  0x3000  RWU : user stack. Read/write, not executable.
+  0x3fffffd000 RU : USYSCALL page. User may only read it (pid lives
+                here). Kernel writes it via its physical address.
+  0x3fffffe000 RW : trapframe. Kernel only (no U).
+  0x3ffffff000 RX : trampoline. Kernel only (no U), executable.
+
+Relation to part 1: these are exactly the non-zero entries that
+print_pgtbl showed (same pte values and pa values). print_pgtbl only
+showed the leaf PTEs for the first/last 10 virtual pages; vmprint shows
+the whole tree, including the intermediate page-table pages that
+print_pgtbl hides. print_pgtbl showed the top pages as 0xFFFFD000 ..
+0xFFFFF000 because it prints only the low 32 bits of the address;
+the real VAs are 0x3fffffd000 .. 0x3ffffff000 (just below MAXVA).
+
+==================================================================
+4. Speed up getpid: which other system calls could use the page?
+==================================================================
+
+Any system call that only READS information the kernel already knows
+and that changes rarely can be served from the shared read-only page,
+with no trap into the kernel:
+  - getpid()  : done in this lab.
+  - uptime()  : the kernel could write the tick count into the page on
+                every timer interrupt; user code just reads it (like
+                Linux's vDSO gettimeofday/clock_gettime).
+  - sbrk(0) / reading the current process size (p->sz) could be read
+                from the page instead of making a system call.
+  - a getppid() (parent pid) could also be stored there.
+  - fstat()-style info is NOT suitable because it depends on arguments.
+The kernel keeps the values up to date whenever they change; user
+space only reads, so no system call (and no trap) is needed.
+
+==================================================================
+5. Superpages: how many, and how many pages saved?
+==================================================================
+
+My kvmmake() uses 95 superpage (2MB) PTEs in the kernel page table:
+  - PLIC: 0x0c000000, size 0x4000000 (64MB)        -> 32 superpages
+  - Kernel data + free RAM: from the first 2MB boundary after etext
+    (0x80200000) up to PHYSTOP (0x88000000) = 126MB -> 63 superpages
+  Total: 32 + 63 = 95 superpages.
+(The UART, VIRTIO, kernel text, the start of data before 0x80200000,
+the trampoline and the kernel stacks are still 4KB pages, because they
+are smaller than 2MB or not 2MB-aligned.)
+
+Saving: each superpage replaces 512 bottom-level PTEs, i.e. one whole
+bottom-level page-table page.
+  - 95 bottom-level page-table pages saved = 95 * 4KB = 380KB of RAM
+  - 95 * 512 = 48,640 fewer leaf PTEs
+It also means far fewer TLB entries are needed to cover kernel memory.

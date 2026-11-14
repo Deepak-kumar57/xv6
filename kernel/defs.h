@@ -189,6 +189,7 @@ int             ismapped(pagetable_t, uint64);
 uint64          vmfault(pagetable_t, uint64, uint64, int);
 #if defined(LAB_PGTBL) || defined(SOL_MMAP)
 void            vmprint(pagetable_t);
+int             kmappages(pagetable_t, uint64, uint64, uint64, int);
 #endif
 #ifdef LAB_PGTBL
 uint64          sys_ksupernpte(void);

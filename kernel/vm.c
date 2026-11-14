@@ -148,10 +148,45 @@ walkaddr(pagetable_t pagetable, uint64 va)
 
 
 #if defined(LAB_PGTBL) || defined(SOL_MMAP) || defined(SOL_COW)
+static void
+vmprint_level(pagetable_t pagetable, int level, uint64 va_base)
+{
+  for (int i = 0; i < 512; i++) {
+    pte_t pte = pagetable[i];
+    if ((pte & PTE_V) == 0)
+      continue; // skip invalid PTEs
+
+    uint64 va = va_base | ((uint64)i << PXSHIFT(level));
+    uint64 pa = PTE2PA(pte);
+
+    // one " .." per depth (top level = 1)
+    for (int d = 2; d >= level; d--)
+      printk(" ..");
+    printk("%p: pte %p pa %p ", (void *)va, (void *)pte, (void *)pa);
+    if (pte & PTE_R)
+      printk("R");
+    if (pte & PTE_W)
+      printk("W");
+    if (pte & PTE_X)
+      printk("X");
+    if (pte & PTE_U)
+      printk("U");
+    if (PTE_LEAF(pte) && level == 1)
+      printk(" (superpage 2MB)");
+    printk("\n");
+
+    // not a leaf -> it points to a lower-level page table
+    if (!PTE_LEAF(pte) && level > 0)
+      vmprint_level((pagetable_t)pa, level - 1, va);
+  }
+}
+
+// Print the contents of a page table.
 void
 vmprint(pagetable_t pagetable)
 {
-  // your code here
+  printk("page table %p\n", (void *)pagetable);
+  vmprint_level(pagetable, 2, 0);
 }
 #endif
 
@@ -162,7 +197,7 @@ vmprint(pagetable_t pagetable)
 void
 kvmmap(pagetable_t kpgtbl, uint64 va, uint64 pa, uint64 sz, int perm)
 {
-  if (mappages(kpgtbl, va, sz, pa, perm) != 0)
+  if (kmappages(kpgtbl, va, sz, pa, perm) != 0)
     panic("kvmmap");
 }
 
@@ -537,4 +572,58 @@ ismapped(pagetable_t pagetable, uint64 va)
   return 0;
 }
 
+// Like mappages(), but only for the kernel page table (used by kvmmap).
+// Wherever va and pa are both 2MB-aligned and at least 2MB remain,
+// map a 2MB superpage with a single level-1 PTE; otherwise map
+// ordinary 4KB pages. Returns 0 on success, -1 if out of memory.
+int
+kmappages(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa, int perm)
+{
+  uint64 a, end;
+  pte_t *pte;
+
+  if ((va % PGSIZE) != 0)
+    panic("kmappages: va not aligned");
+  if ((size % PGSIZE) != 0)
+    panic("kmappages: size not aligned");
+  if (size == 0)
+    panic("kmappages: size");
+
+  a = va;
+  end = va + size;
+  while (a < end) {
+    if ((a % SUPERPGSIZE) == 0 && (pa % SUPERPGSIZE) == 0 &&
+        end - a >= SUPERPGSIZE) {
+      // superpage: find (or create) the level-1 PTE for a.
+      pte_t *l2pte = &pagetable[PX(2, a)];
+      pagetable_t l1;
+      if (*l2pte & PTE_V) {
+        if (PTE_LEAF(*l2pte))
+          panic("kmappages: remap");
+        l1 = (pagetable_t)PTE2PA(*l2pte);
+      } else {
+        if ((l1 = (pagetable_t)kalloc()) == 0)
+          return -1;
+        memset(l1, 0, PGSIZE);
+        *l2pte = PA2PTE(l1) | PTE_V;
+      }
+      pte = &l1[PX(1, a)];
+      if (*pte & PTE_V)
+        panic("kmappages: remap");
+      *pte = PA2PTE(pa) | perm | PTE_V; // leaf at level 1 = 2MB page
+      a += SUPERPGSIZE;
+      pa += SUPERPGSIZE;
+    } else {
+      // ordinary 4KB page.
+      if ((pte = walk(pagetable, a, 1)) == 0)
+        return -1;
+      if (*pte & PTE_V)
+        panic("kmappages: remap");
+      *pte = PA2PTE(pa) | perm | PTE_V;
+      a += PGSIZE;
+      pa += PGSIZE;
+    }
+  }
+  return 0;
+}
 
