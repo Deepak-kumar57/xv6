@@ -107,13 +107,17 @@ sys_vmprint(void)
 #endif
 
 #ifdef LAB_PGTBL
-#define PGACCESS_MAX 64
+// pgaccess(start va, number of pages, user address of bitmask).
+// Sets bit i of the mask if page i was accessed since the last call,
+// then clears PTE_A. Returns 0 on success, -1 on error.
+// Heap pages are allocated lazily, so a page inside p->sz that has no
+// PTE yet simply counts as "not accessed". Pages beyond p->sz are an error.
+#define PGACCESS_MAX (PGSIZE * 8) // one kernel page of bits
 uint64
 sys_pgaccess(void)
 {
   uint64 va, maskaddr;
   int npages;
-  uint64 mask = 0; // kernel temporary buffer
   struct proc *p = myproc();
 
   argaddr(0, &va);
@@ -124,24 +128,35 @@ sys_pgaccess(void)
     return -1;
 
   va = PGROUNDDOWN(va);
+  if (va >= MAXVA || va + (uint64)npages * PGSIZE > p->sz)
+    return -1; // range goes past the process's memory
+
+  // kernel temporary buffer for the bitmask (too big for the stack)
+  char *mask = kalloc();
+  if (mask == 0)
+    return -1;
+  memset(mask, 0, PGSIZE);
+
   for (int i = 0; i < npages; i++) {
     uint64 a = va + (uint64)i * PGSIZE;
-    if (a >= MAXVA)
-      return -1;
     pte_t *pte = walk(p->pagetable, a, 0);
-    if (pte == 0 || (*pte & PTE_V) == 0 || (*pte & PTE_U) == 0)
-      return -1; // page not mapped
+    if (pte == 0 || (*pte & PTE_V) == 0)
+      continue; // lazily-allocated page not touched yet: not accessed
+    if ((*pte & PTE_U) == 0) {
+      kfree(mask); // e.g. stack guard page: user can't access it
+      return -1;
+    }
     if (*pte & PTE_A) {
-      mask |= (1L << i);
+      mask[i / 8] |= (1 << (i % 8));
       *pte &= ~PTE_A; // clear it, or it stays set forever
     }
   }
 
   // copy only as many bytes as needed for npages bits
   int nbytes = (npages + 7) / 8;
-  if (copyout(p->pagetable, p->sz, maskaddr, (char *)&mask, nbytes) < 0)
-    return -1;
-  return 0;
+  int r = copyout(p->pagetable, p->sz, maskaddr, mask, nbytes);
+  kfree(mask);
+  return r < 0 ? -1 : 0;
 }
 #endif
 
