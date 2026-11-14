@@ -137,9 +137,7 @@ find(char *path, char *target, char **command, int count)
 int
 main(int argc, char *argv[])
 {
-  if (argc < 3 ||
-      (argc > 3 &&
-       (argc < 5 || strcmp(argv[3], "-exec") != 0))) {
+  if (argc < 3 || (argc > 3 && (argc < 5 || strcmp(argv[3], "-exec") != 0))) {
     fprintf(2, "Usage: find path name [-exec command [args...]]\n");
     exit(1);
   }
